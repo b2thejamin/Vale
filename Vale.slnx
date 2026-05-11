@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Vale.Client/Vale.Client.csproj" />
+  <Project Path="Vale.Server/Vale.Server.csproj" />
+  <Project Path="Vale.Shared/Vale.Shared.csproj" />
+</Solution>

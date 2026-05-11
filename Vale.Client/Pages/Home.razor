@@ -1,0 +1,323 @@
+@page "/"
+@implements IAsyncDisposable
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JsRuntime
+
+<PageTitle>Mini-StoneVale</PageTitle>
+
+<div class="shell" @onkeydown="HandleKeyDown" @onkeyup="HandleKeyUp" tabindex="0">
+    @if (!_isJoined)
+    {
+        <div class="join-panel">
+            <h1>Mini-StoneVale</h1>
+            <p>Enter the world.</p>
+            <input placeholder="Display name" @bind="_displayName" maxlength="24" />
+            <button @onclick="JoinAsync">Join</button>
+            @if (!string.IsNullOrWhiteSpace(_status))
+            {
+                <p class="status">@_status</p>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="hud">
+            <strong>@_displayName</strong>
+            <span>@_status</span>
+        </div>
+        <div class="tools">
+            <button class="@ToolClass(null)" @onclick="() => SelectTool(null)">Move</button>
+            <button class="@ToolClass(StructureType.Wall)" @onclick="() => SelectTool(StructureType.Wall)">Wall</button>
+            <button class="@ToolClass(StructureType.Road)" @onclick="() => SelectTool(StructureType.Road)">Road</button>
+            <button class="@ToolClass(StructureType.Floor)" @onclick="() => SelectTool(StructureType.Floor)">Floor</button>
+        </div>
+        <canvas class="world-canvas" width="1280" height="760" @ref="_canvasRef" @onclick="OnCanvasClicked"></canvas>
+    }
+</div>
+
+@code {
+    private readonly HashSet<string> _pressedKeys = [];
+    private readonly Dictionary<Guid, PlayerState> _players = new();
+    private readonly Dictionary<int, StructureState> _structures = new();
+
+    private HubConnection? _hubConnection;
+    private PeriodicTimer? _tickTimer;
+    private CancellationTokenSource? _tickCancellation;
+    private ElementReference _canvasRef;
+
+    private string _displayName = "";
+    private string _status = "Disconnected";
+    private bool _isJoined;
+    private bool _canvasInitialized;
+    private Guid _playerId;
+    private StructureType? _selectedStructure;
+    private (float X, float Y)? _clickTarget;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_isJoined && !_canvasInitialized)
+        {
+            await JsRuntime.InvokeVoidAsync("valeCanvas.initialize", _canvasRef);
+            _canvasInitialized = true;
+        }
+
+        if (_isJoined && _canvasInitialized)
+        {
+            await RenderWorldAsync();
+        }
+    }
+
+    private async Task JoinAsync()
+    {
+        if (_isJoined)
+        {
+            return;
+        }
+
+        _status = "Connecting...";
+
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/world"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        RegisterHubHandlers(_hubConnection);
+
+        await _hubConnection.StartAsync();
+
+        var response = await _hubConnection.InvokeAsync<JoinWorldResponse>("JoinWorld", new JoinWorldRequest(_displayName));
+
+        _playerId = response.PlayerId;
+        _players.Clear();
+        foreach (var player in response.Snapshot.Players)
+        {
+            _players[player.PlayerId] = player;
+        }
+
+        _structures.Clear();
+        foreach (var structure in response.Snapshot.Structures)
+        {
+            _structures[GetStructureKey(structure.ChunkX, structure.ChunkY, structure.TileX, structure.TileY)] = structure;
+        }
+
+        _isJoined = true;
+        _status = "Connected";
+
+        StartTickLoop();
+
+        await RenderWorldAsync();
+        StateHasChanged();
+    }
+
+    private void RegisterHubHandlers(HubConnection connection)
+    {
+        connection.On<PlayerState>("PlayerJoined", player =>
+        {
+            _players[player.PlayerId] = player;
+            _status = $"{player.DisplayName} joined";
+            InvokeAsync(RenderWorldAsync);
+            InvokeAsync(StateHasChanged);
+        });
+
+        connection.On<PlayerState>("PlayerMoved", player =>
+        {
+            _players[player.PlayerId] = player;
+            InvokeAsync(RenderWorldAsync);
+        });
+
+        connection.On<Guid>("PlayerLeft", playerId =>
+        {
+            _players.Remove(playerId);
+            InvokeAsync(RenderWorldAsync);
+        });
+
+        connection.On<StructureState>("StructurePlaced", structure =>
+        {
+            _structures[GetStructureKey(structure.ChunkX, structure.ChunkY, structure.TileX, structure.TileY)] = structure;
+            InvokeAsync(RenderWorldAsync);
+        });
+    }
+
+    private void StartTickLoop()
+    {
+        _tickCancellation = new CancellationTokenSource();
+        _tickTimer = new PeriodicTimer(TimeSpan.FromMilliseconds(50));
+
+        _ = Task.Run(async () =>
+        {
+            while (_tickTimer is not null && await _tickTimer.WaitForNextTickAsync(_tickCancellation.Token))
+            {
+                await SendMovementIntentAsync();
+            }
+        }, _tickCancellation.Token);
+    }
+
+    private async Task SendMovementIntentAsync()
+    {
+        if (_hubConnection is null || _hubConnection.State != HubConnectionState.Connected)
+        {
+            return;
+        }
+
+        if (!_players.TryGetValue(_playerId, out var self))
+        {
+            return;
+        }
+
+        var direction = GetKeyboardDirection();
+        var targetX = self.X;
+        var targetY = self.Y;
+
+        if (direction != (0f, 0f))
+        {
+            targetX += direction.X * 0.45f;
+            targetY += direction.Y * 0.45f;
+            _clickTarget = null;
+        }
+        else if (_clickTarget.HasValue)
+        {
+            var clickDeltaX = _clickTarget.Value.X - self.X;
+            var clickDeltaY = _clickTarget.Value.Y - self.Y;
+            var clickDistance = MathF.Sqrt((clickDeltaX * clickDeltaX) + (clickDeltaY * clickDeltaY));
+
+            if (clickDistance <= 0.15f)
+            {
+                _clickTarget = null;
+                return;
+            }
+
+            targetX = self.X + ((clickDeltaX / clickDistance) * 0.45f);
+            targetY = self.Y + ((clickDeltaY / clickDistance) * 0.45f);
+        }
+        else
+        {
+            return;
+        }
+
+        await _hubConnection.InvokeAsync("MovePlayer", new MovePlayerRequest(targetX, targetY));
+    }
+
+    private (float X, float Y) GetKeyboardDirection()
+    {
+        float x = 0;
+        float y = 0;
+
+        if (_pressedKeys.Contains("w")) y -= 1;
+        if (_pressedKeys.Contains("s")) y += 1;
+        if (_pressedKeys.Contains("a")) x -= 1;
+        if (_pressedKeys.Contains("d")) x += 1;
+
+        if (x == 0 && y == 0)
+        {
+            return (0, 0);
+        }
+
+        var length = MathF.Sqrt((x * x) + (y * y));
+        return (x / length, y / length);
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (string.IsNullOrWhiteSpace(args.Key))
+        {
+            return;
+        }
+
+        _pressedKeys.Add(args.Key.ToLowerInvariant());
+    }
+
+    private void HandleKeyUp(KeyboardEventArgs args)
+    {
+        if (string.IsNullOrWhiteSpace(args.Key))
+        {
+            return;
+        }
+
+        _pressedKeys.Remove(args.Key.ToLowerInvariant());
+    }
+
+    private async Task OnCanvasClicked(MouseEventArgs args)
+    {
+        if (_hubConnection is null || _hubConnection.State != HubConnectionState.Connected)
+        {
+            return;
+        }
+
+        var worldPoint = await JsRuntime.InvokeAsync<CanvasPoint>("valeCanvas.screenToWorld", args.OffsetX, args.OffsetY);
+        var tileX = (int)MathF.Floor(worldPoint.X);
+        var tileY = (int)MathF.Floor(worldPoint.Y);
+
+        if (tileX is < WorldConstants.WorldMinTile or > WorldConstants.WorldMaxTile ||
+            tileY is < WorldConstants.WorldMinTile or > WorldConstants.WorldMaxTile)
+        {
+            return;
+        }
+
+        if (_selectedStructure.HasValue)
+        {
+            var placement = await _hubConnection.InvokeAsync<PlacementResult>(
+                "PlaceStructure",
+                new PlaceStructureRequest(tileX, tileY, _selectedStructure.Value));
+
+            _status = placement.Success ? "Structure placed" : placement.Error ?? "Placement failed";
+            StateHasChanged();
+            return;
+        }
+
+        _clickTarget = (worldPoint.X, worldPoint.Y);
+    }
+
+    private void SelectTool(StructureType? structureType)
+    {
+        _selectedStructure = structureType;
+        _status = structureType is null ? "Move mode" : $"Build mode: {structureType}";
+    }
+
+    private string ToolClass(StructureType? structureType)
+    {
+        return _selectedStructure == structureType ? "active" : string.Empty;
+    }
+
+    private async Task RenderWorldAsync()
+    {
+        await JsRuntime.InvokeVoidAsync("valeCanvas.render", _canvasRef, new RenderPayload
+        {
+            Players = _players.Values.ToArray(),
+            Structures = _structures.Values.ToArray(),
+            CurrentPlayerId = _playerId,
+            ChunkSize = WorldConstants.ChunkSize
+        });
+    }
+
+    private static int GetStructureKey(int chunkX, int chunkY, int tileX, int tileY)
+    {
+        return HashCode.Combine(chunkX, chunkY, tileX, tileY);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _tickCancellation?.Cancel();
+        _tickTimer?.Dispose();
+
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+
+        _tickCancellation?.Dispose();
+    }
+
+    private sealed class RenderPayload
+    {
+        public required PlayerState[] Players { get; init; }
+        public required StructureState[] Structures { get; init; }
+        public required Guid CurrentPlayerId { get; init; }
+        public required int ChunkSize { get; init; }
+    }
+
+    private sealed class CanvasPoint
+    {
+        public float X { get; set; }
+        public float Y { get; set; }
+    }
+}
