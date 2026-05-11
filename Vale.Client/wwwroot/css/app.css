@@ -1,0 +1,74 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #0d0f0f;
+    color: #d6d2c4;
+    font-family: Inter, Segoe UI, sans-serif;
+}
+
+#app {
+    width: 100%;
+    height: 100%;
+}
+
+.shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    box-sizing: border-box;
+    outline: none;
+}
+
+.join-panel {
+    margin-top: 18vh;
+    width: min(420px, 92vw);
+    background: #1a1d1d;
+    border: 1px solid #333;
+    padding: 1rem;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.join-panel input,
+.join-panel button,
+.tools button {
+    background: #2a2d2d;
+    color: #ddd;
+    border: 1px solid #4a4d4d;
+    padding: 0.5rem;
+    border-radius: 4px;
+}
+
+.tools {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.tools .active {
+    border-color: #f1873f;
+    color: #f9d2a7;
+}
+
+.hud {
+    width: min(1280px, 98vw);
+    display: flex;
+    justify-content: space-between;
+}
+
+.world-canvas {
+    width: min(1280px, 98vw);
+    height: auto;
+    border: 1px solid #343434;
+    background: #111;
+}
+
+.status {
+    color: #f1873f;
+}
