@@ -284,7 +284,7 @@
         {
             Players = _players.Values.ToArray(),
             Structures = _structures.Values.ToArray(),
-            SelfId = _playerId,
+            CurrentPlayerId = _playerId,
             ChunkSize = WorldConstants.ChunkSize
         });
     }
@@ -308,7 +308,7 @@
     {
         public required PlayerState[] Players { get; init; }
         public required StructureState[] Structures { get; init; }
-        public required Guid SelfId { get; init; }
+        public required Guid CurrentPlayerId { get; init; }
         public required int ChunkSize { get; init; }
     }
 

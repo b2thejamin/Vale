@@ -69,7 +69,7 @@ window.valeCanvas = (() => {
             const p = isoToScreen(player.x, player.y);
             ctx.beginPath();
             ctx.arc(p.x, p.y + 7, 4.5, 0, Math.PI * 2);
-            ctx.fillStyle = player.playerId === payload.selfId ? "#f1873f" : "#8d8fb3";
+            ctx.fillStyle = player.playerId === payload.currentPlayerId ? "#f1873f" : "#8d8fb3";
             ctx.fill();
             ctx.fillStyle = "#dfd8cf";
             ctx.font = "11px Segoe UI";
