@@ -19,7 +19,7 @@ public sealed class WorldStateService(IServiceScopeFactory scopeFactory, ILogger
         var persisted = await db.Structures.AsNoTracking().ToListAsync(cancellationToken);
         foreach (var structure in persisted)
         {
-            _structures[GetStructureKey(structure.TileX, structure.TileY)] = ToState(structure);
+            _structures[GetStructureKey(structure.ChunkX, structure.ChunkY, structure.TileX, structure.TileY)] = ToState(structure);
         }
 
         logger.LogInformation("Loaded {StructureCount} structures from persistence.", _structures.Count);
@@ -112,7 +112,7 @@ public sealed class WorldStateService(IServiceScopeFactory scopeFactory, ILogger
             return new PlacementResult(false, "Out of bounds.", null);
         }
 
-        var key = GetStructureKey(request.TileX, request.TileY);
+        var key = GetStructureKey(0, 0, request.TileX, request.TileY);
         if (_structures.ContainsKey(key))
         {
             return new PlacementResult(false, "Tile already occupied.", null);
@@ -161,7 +161,10 @@ public sealed class WorldStateService(IServiceScopeFactory scopeFactory, ILogger
         }
     }
 
-    private static int GetStructureKey(int tileX, int tileY) => tileY * WorldConstants.ChunkSize + tileX;
+    private static int GetStructureKey(int chunkX, int chunkY, int tileX, int tileY)
+    {
+        return HashCode.Combine(chunkX, chunkY, tileX, tileY);
+    }
 
     private static StructureState ToState(StructureEntity entity)
     {

@@ -97,7 +97,7 @@
         _structures.Clear();
         foreach (var structure in response.Snapshot.Structures)
         {
-            _structures[GetStructureKey(structure.TileX, structure.TileY)] = structure;
+            _structures[GetStructureKey(structure.ChunkX, structure.ChunkY, structure.TileX, structure.TileY)] = structure;
         }
 
         _isJoined = true;
@@ -133,7 +133,7 @@
 
         connection.On<StructureState>("StructurePlaced", structure =>
         {
-            _structures[GetStructureKey(structure.TileX, structure.TileY)] = structure;
+            _structures[GetStructureKey(structure.ChunkX, structure.ChunkY, structure.TileX, structure.TileY)] = structure;
             InvokeAsync(RenderWorldAsync);
         });
     }
@@ -289,7 +289,10 @@
         });
     }
 
-    private static int GetStructureKey(int x, int y) => y * WorldConstants.ChunkSize + x;
+    private static int GetStructureKey(int chunkX, int chunkY, int tileX, int tileY)
+    {
+        return HashCode.Combine(chunkX, chunkY, tileX, tileY);
+    }
 
     public async ValueTask DisposeAsync()
     {
